@@ -1,0 +1,11 @@
+---
+- name: Store lvm parition into cmd_output
+  ansible.builtin.shell: >
+    lsblk -npl "{{ drive }}" | 
+    awk 'NR==2 {print $1}'
+  args:
+    executable: /bin/bash
+  register: cmd_output
+- name: Append command output to the lvm_partitions list
+  set_fact:
+    lvm_partitions: "{{ lvm_partitions + [cmd_output.stdout] }}"

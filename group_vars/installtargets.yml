@@ -1,0 +1,5 @@
+---
+ansible_user: root
+hostname: MyDefaultArchHostname
+user_name: user
+user_password: '$1$3TYPWKP9$4nuk3zw5dbv9E6WDKnhk11'

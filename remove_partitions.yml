@@ -1,0 +1,12 @@
+---
+- name: Read device information (always use unit when probing)
+  community.general.parted: device="{{ device }}" unit=MiB
+  register: sdb_info
+- name: Remove all partitions from disk
+  community.general.parted:
+    device: "{{ device }}"
+    number: "{{ partition.num }}"
+    state: absent
+  loop: '{{ sdb_info.partitions }}'
+  loop_control:
+    loop_var: partition

@@ -1,0 +1,293 @@
+- hosts: installtargets
+  vars:
+    volume_group_name: VolumeGroup00
+    reflector_countries:
+      - France
+      - Germany
+    keymap: en
+    timezone: Europe/Paris
+  tasks:
+    - name: Abort if the host is not booted from the Arch install media
+      fail:
+        msg: "This host is not booted from the Arch install media!"
+      when: ansible_nodename != 'archiso'
+      tags:
+        - quick_exit
+    - name: Keyboard language
+      command: loadkeys "{{ keymap }}"
+      tags:
+        - keymap
+    - name: Synchronize clock via NTP
+      command: timedatectl set-ntp true
+      tags:
+        - sync_clock
+    - name: Setup repository mirrors
+      block:
+        - name: Refresh package database
+          community.general.pacman:
+            update_cache: true
+            upgrade: false
+        - name: Install package reflector from repo
+          community.general.pacman:
+            force: true
+            update_cache: true
+            name: reflector
+            state: present
+        - name: Get fastest reflector mirrors
+          command: reflector --country "{{ reflector_countries | join(',') }}" --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+        - name: Refresh package database
+          community.general.pacman:
+            update_cache: true
+            upgrade: false
+      tags:
+        - mirrors
+    - name: Unmount '/mnt' recursively
+      ansible.posix.mount:
+        path: /mnt/*
+        state: unmounted
+        opts: -R
+    - name: Partition the disks
+      block:
+        - name: Install package jq from repo
+          community.general.pacman:
+            name: jq
+            state: present
+        - name: Register drives for lvm
+          ansible.builtin.shell: >
+            lsblk -d -J | 
+            jq '.blockdevices[] |
+            select(.type == "disk" and .rm == false and .ro == false) |
+            .name' -r
+          register: drives
+          args:
+            executable: /bin/bash
+        - name: Convert drives output to an Ansible list
+          ansible.builtin.set_fact:
+            drives: "{{ drives.stdout_lines }}"
+        - name: Remove existing volume group
+          lvg:
+            vg: "{{ volume_group_name }}"
+            force: yes
+            state: absent
+        - name: Iterate through each drive to remove all partitions
+          include_tasks: remove_partitions.yml
+          vars:
+            device: "/dev/{{ item }}"
+          loop: "{{ drives }}"
+          loop_control:
+            loop_var: item
+        - name: Create a new primary partition with a size of 512MiB
+          community.general.parted:
+            name: EFI
+            device: /dev/{{ drives[0] }}
+            label: gpt
+            number: 1
+            part_start: "0%"
+            part_end: 512MiB
+            flags: [boot, esp]
+            state: present
+        - name: Create a new partition to fill all available space
+          community.general.parted:
+            device: /dev/{{ drives[0] }}
+            label: gpt
+            number: 2
+            part_start: 512MiB
+            part_end: "100%"
+            flags: [lvm]
+            state: present
+        - name: Create a sliced list starting from second disk
+          ansible.builtin.set_fact:
+            remaining_drives: "{{ drives[1:] }}"
+        - name: Create a new partition for other drives
+          community.general.parted:
+            device: /dev/{{ item }}
+            label: gpt
+            number: 1
+            part_start: "0%" 
+            part_end: "100%"
+            flags: [lvm]
+            state: present
+          loop: "{{ remaining_drives }}"
+          loop_control:
+            loop_var: item
+      tags:
+        - disk_partitioning
+    - name: Setup LVM Physical Volumes and Volume Group
+      block:
+        - name: Initialize lvm_partitions list with an empty list
+          ansible.builtin.set_fact:
+            lvm_partitions: []
+        - name: Get lvm partition of boot drive
+          ansible.builtin.shell: >
+            lsblk -npl /dev/"{{ drives[0] }}" | 
+            awk 'NR==3 {print $1}'
+          args:
+            executable: /bin/bash
+          register: cmd_output
+        - name: Append command output to the lvm_partitions list
+          ansible.builtin.set_fact:
+            lvm_partitions: "{{ lvm_partitions + [cmd_output.stdout] }}"
+        - name: Get lvm partition of other drives
+          include_tasks: store_partition.yml
+          vars:
+            drive: /dev/"{{ item }}"
+          loop: "{{ remaining_drives }}"
+          loop_control:
+            loop_var: item
+        - name: Create physical volumes and volume group
+          lvg:
+            vg: "{{ volume_group_name }}"
+            pvs: "{{lvm_partitions | join(',')}}"
+      tags:
+        - lvm_pv
+    - name: Configure logical volumes
+      block:
+      - name: Initialize lv_config
+        set_fact:
+          lv_config:
+            - {lv: tmp, size: "2g", mnt: "/mnt/tmp"}
+            - {lv: home, size: "70%FREE", mnt: "/mnt/home"}
+            - {lv: root, size: "100%FREE", mnt: "/mnt"}
+      - name: Create logical volumes based on lv_config
+        lvol:
+          vg: "{{ volume_group_name }}"
+          lv: '{{ item.lv }}'
+          size: '{{ item.size }}'
+        loop: "{{ lv_config }}"
+      tags:
+        - lvm_lv
+    - name: Create filesystems
+      block:
+        - name: Get efi boot partition
+          shell: >
+            lsblk -npl /dev/"{{ drives[0] }}" | 
+            grep -v lvm |
+            awk 'NR==2 {print $1}'
+          register: cmd_output
+          args:
+            executable: /bin/bash
+        - name: Store boot_partition
+          set_fact:
+            boot_partition: "{{ cmd_output.stdout }}"
+        - name: Format boot_partition
+          command:
+            cmd: mkfs.fat -F32 "{{ boot_partition }}"
+        - name: Format lvm_partitions
+          command:
+            cmd: mkfs.ext4 "/dev/"{{ volume_group_name }}"/{{ item.lv }}"
+          loop: "{{ lv_config }}"
+          loop_control:
+            loop_var: item
+      tags:
+        - create_filtesystems
+    - name: Mount filesystems
+      block:
+        - name: Mount lvm partitions
+          mount:
+            src: /dev/{{ volume_group_name }}/{{ item.lv }}
+            path: "{{ item.mnt }}"
+            fstype: ext4
+            state: mounted
+          loop: "{{ lv_config | reverse }}"
+        - name: Ensure the /mnt/boot directory exists
+          ansible.builtin.file:
+            path: /mnt/boot
+            state: directory
+        - name: Mount efi boot filesystem
+          mount:
+            src: "{{ boot_partition }}"
+            path: /mnt/boot
+            fstype: vfat
+            state: mounted
+      tags: mount_filesystems
+    - name: Run pacstrap
+      command: pacstrap /mnt base efibootmgr grub linux linux-firmware lvm2 openssh python reflector sudo vim git parted
+      tags:
+        - pacstrap
+    - name: Generate fstab
+      shell: genfstab -U /mnt >> /mnt/etc/fstab
+      args:
+        executable: /bin/bash
+    - name: Reload systemd daemon
+      ansible.builtin.systemd_service:
+        daemon_reload: yes
+    - name: Set local timezone
+      command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/{{ timezone }} /etc/localtime
+      tags:
+        - timezone
+    - name: Setup locales
+      block:
+        - name: Configure locale.gen
+          lineinfile:
+            dest: /mnt/etc/locale.gen
+            regexp: '{{ item.regex }}'
+            line: '{{ item.line }}'
+          loop:
+            - {regex: en_US\.UTF-8 UTF-8, line: en_US.UTF-8 UTF-8}
+            - {regex: en_US ISO-8859-1, line: en_US ISO-8859-1}
+        - name: Create locale.conf
+          copy:
+            content: "LANG=en_US.UTF-8"
+            dest: /mnt/etc/locale.conf
+        - name: Generate locales
+          command: arch-chroot /mnt locale-gen
+      tags: setup_locales
+    - name: Set hostname
+      copy:
+        content: '{{ hostname }}'
+        dest: /mnt/etc/hostname
+    - name: Set hosts
+      ansible.builtin.template:
+        src: hosts.j2
+        dest: /mnt/etc/hosts
+    - name: Install packages
+      command: arch-chroot /mnt pacman -Sy --noconfirm base-devel linux-headers os-prober mtools dosfstools networkmanager wireless_tools wpa_supplicant git github-cli bluez bluez-utils pipewire-pulse cups xdg-utils xdg-user-dirs
+    - name: Set up initramfs
+      block:
+        - name: Add mkinitcpio.conf hooks
+          ansible.builtin.shell: >
+            sed -i '/^HOOKS=/s/block/& lvm2/g' /mnt/etc/mkinitcpio.conf
+          args:
+            executable: /bin/bash
+        - name: Create new initramfs
+          command: arch-chroot /mnt mkinitcpio -p linux
+      tags:
+        - initramfs
+        - mkinitcpio
+    - name: Set up grub
+      block:
+        - name: Install grub
+          command: arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+        - name: Create grub config
+          command: arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+      tags:
+        - grub
+    - name: Enable systemd services
+      command: arch-chroot /mnt systemctl enable NetworkManager sshd bluetooth
+    - name: Setup user account
+      block:
+        - name: Create user account
+          command: arch-chroot /mnt useradd --create-home --user-group --groups wheel {{ user_name }} --password {{ user_password }}
+      tags:
+        - user_account
+    - name: Give sudo access to wheel group
+      copy:
+        content: '%wheel ALL=(ALL) ALL'
+        dest: /mnt/etc/sudoers.d/wheel
+        validate: /usr/sbin/visudo --check --file=%s
+      tags:
+        - sudo
+    - name: Unmount all partitions
+      ansible.posix.mount:
+        path: /mnt/*
+        state: unmounted
+        opts: -R
+    - name: Reboot
+      ansible.builtin.reboot:
+        connect_timeout: 1
+        reboot_timeout: 1
+      failed_when: false
+      tags:
+        - reboot
+    - name: End play
+      meta: end_play

@@ -1,0 +1,48 @@
+* How to use
+** Once booted in the install media
+1. Set the root password using the `passwd` command.
+2. Unplug all drives which will not be used for the lvm setup
+
+** Install ansible and the community.general collections in the ansible control computer
+#+begin_src bash
+sudo pacman -Sy archlinux-keyring ansible
+ansible-galaxy collection install community.general
+#+end_src
+
+** Update variables and metadata
+- Add the hosts ips under [installtargets] group in the inventory file
+
+- Update the `vars` in the playbook.yml
+
+- Update the hostname in the `host_vars` files
+
+- Generate the {{ user_password }} for group_vars or each host_vars with
+
+  #+begin_src bash
+  echo "MyPassword" | openssl passwd -1 -stdin
+  #+end_src
+
+** Copy the ssh key of the control pane to the inventory hosts
+#+begin_src bash
+eval $(ssh-agent)
+ssh-add ~/.ssh/id_rsa
+ssh-copy-id <ansible_user>@<ip>
+#+end_src
+
+** Check that all the hosts are working
+#+begin_src bash
+ansible installtargets -i inventory -m command -a date
+#+end_src
+
+** Run the playbook
+#+begin_src bash
+ansible-playbook -i inventory playbook.yml
+#+end_src
+
+** TODO's
+- [ ] Swap file
+- [ ] Swap partition size as variable/parameter
+- [ ] Hybrid hibernation
+- [ ] Add wireless internet connection with iwctl
+- [ ] LUKS Encryption
+- [ ] Handle BIOS
