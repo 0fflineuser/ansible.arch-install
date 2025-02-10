@@ -145,7 +145,7 @@
       - name: Initialize lv_config
         set_fact:
           lv_config:
-            - {lv: tmp, size: "2g", mnt: "/mnt/tmp"}
+            - {lv: tmp, size: "10g", mnt: "/mnt/tmp"}
             - {lv: home, size: "70%FREE", mnt: "/mnt/home"}
             - {lv: root, size: "100%FREE", mnt: "/mnt"}
       - name: Create logical volumes based on lv_config

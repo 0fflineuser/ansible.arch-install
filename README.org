@@ -40,6 +40,7 @@ ansible-playbook -i inventory playbook.yml
 #+end_src
 
 ** TODO's
+- [ ] XFS
 - [ ] Swap file
 - [ ] Swap partition size as variable/parameter
 - [ ] Hybrid hibernation
