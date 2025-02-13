@@ -242,7 +242,7 @@
         src: hosts.j2
         dest: /mnt/etc/hosts
     - name: Install packages
-      command: arch-chroot /mnt pacman -Sy --noconfirm base-devel linux-headers os-prober mtools dosfstools networkmanager wireless_tools wpa_supplicant git github-cli bluez bluez-utils pipewire-pulse cups xdg-utils xdg-user-dirs xfsprogs
+      command: arch-chroot /mnt pacman -Sy --noconfirm base-devel linux-headers os-prober mtools dosfstools networkmanager wireless_tools wpa_supplicant git github-cli bluez bluez-utils pipewire-pulse cups xdg-utils xdg-user-dirs xfsprogs fuse3
     - name: Set up initramfs
       block:
         - name: Add mkinitcpio.conf hooks
