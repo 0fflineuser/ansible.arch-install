@@ -1,6 +1,7 @@
 - hosts: installtargets
   vars:
     volume_group_name: VolumeGroup00
+    filesystem: xfs
     reflector_countries:
       - France
       - Germany
@@ -174,7 +175,7 @@
             cmd: mkfs.fat -F32 "{{ boot_partition }}"
         - name: Format lvm_partitions
           command:
-            cmd: mkfs.ext4 "/dev/"{{ volume_group_name }}"/{{ item.lv }}"
+            cmd: mkfs.{{ filesystem }} /dev/{{ volume_group_name }}/{{ item.lv }}
           loop: "{{ lv_config }}"
           loop_control:
             loop_var: item
@@ -186,7 +187,7 @@
           mount:
             src: /dev/{{ volume_group_name }}/{{ item.lv }}
             path: "{{ item.mnt }}"
-            fstype: ext4
+            fstype: xfs
             state: mounted
           loop: "{{ lv_config | reverse }}"
         - name: Ensure the /mnt/boot directory exists
@@ -241,7 +242,7 @@
         src: hosts.j2
         dest: /mnt/etc/hosts
     - name: Install packages
-      command: arch-chroot /mnt pacman -Sy --noconfirm base-devel linux-headers os-prober mtools dosfstools networkmanager wireless_tools wpa_supplicant git github-cli bluez bluez-utils pipewire-pulse cups xdg-utils xdg-user-dirs
+      command: arch-chroot /mnt pacman -Sy --noconfirm base-devel linux-headers os-prober mtools dosfstools networkmanager wireless_tools wpa_supplicant git github-cli bluez bluez-utils pipewire-pulse cups xdg-utils xdg-user-dirs xfsprogs
     - name: Set up initramfs
       block:
         - name: Add mkinitcpio.conf hooks

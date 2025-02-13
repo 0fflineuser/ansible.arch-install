@@ -1,7 +1,16 @@
 * How to use
-** Once booted in the install media
-1. Set the root password using the `passwd` command.
-2. Unplug all drives which will not be used for the lvm setup
+
+** Unplug all the target drives which will not be used for the lvm setup
+
+** Boot the targets with the archlinux install iso from a usb stick
+[[https://archlinux.org/download/]]
+
+** Remove the usb stick
+
+** Connect the targets to wifi if needed
+[[https://wiki.archlinux.org/title/Iwd]]
+
+** Once booted in the install media set the root password using the `passwd` command.
 
 ** Install ansible and the community.general collections in the ansible control computer
 #+begin_src bash
@@ -14,7 +23,7 @@ ansible-galaxy collection install community.general
 
 - Update the `vars` in the playbook.yml
 
-- Update the hostname in the `host_vars` files
+- Update the hostname in the `host_vars` files (e.g. installtargets.yml)
 
 - Generate the {{ user_password }} for group_vars or each host_vars with
 
@@ -40,7 +49,7 @@ ansible-playbook -i inventory playbook.yml
 #+end_src
 
 ** TODO's
-- [ ] XFS
+- [x] XFS
 - [ ] Swap file
 - [ ] Swap partition size as variable/parameter
 - [ ] Hybrid hibernation
